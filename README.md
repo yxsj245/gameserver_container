@@ -4,6 +4,8 @@
    [文档站](http://blogpage.xiaozhuhouses.asia/html4/index.html#/)
    [赞助项目](https://github.com/yxsj245/gameserver_container/blob/main/%E8%B5%9E%E5%8A%A9%E9%A1%B9%E7%9B%AE.md)
 
+### 此分支开源协议变更为Apache2.0
+
 # 社交媒体平台
 ### [bilibili](https://www.bilibili.com/video/BV1YiLqz7EVX/)
 ### [抖音](https://v.douyin.com/XVMwsSjymZg/)
