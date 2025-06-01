@@ -158,17 +158,7 @@ RUN mkdir -p ${STEAMCMD_DIR} \
     && chown -R ${STEAM_USER}:${STEAM_USER} ${STEAM_HOME}/.steam
 
 # 复制菜单脚本和启动脚本
-COPY --chown=steam:steam menu.sh /home/steam/menu.sh
 COPY --chown=steam:steam start.sh /home/steam/start.sh
-COPY --chown=steam:steam game_installers.sh /home/steam/game_installers.sh
-COPY --chown=steam:steam update_scripts.sh /home/steam/update_scripts.sh
-COPY --chown=steam:steam installgame.json /home/steam/installgame.json
-RUN chmod +x /home/steam/menu.sh /home/steam/start.sh /home/steam/game_installers.sh /home/steam/update_scripts.sh
-
-# 创建MCSM目录并复制MCSM库文件
-RUN mkdir -p /home/steam/MCSM
-COPY --chown=steam:steam MCSM/mcsm_api_lib.sh /home/steam/MCSM/
-RUN chmod +x /home/steam/MCSM/mcsm_api_lib.sh
 
 # 创建目录用于挂载游戏数据
 VOLUME ["${GAMES_DIR}"]
@@ -178,4 +168,4 @@ USER ${STEAM_USER}
 WORKDIR ${STEAM_HOME}
 
 # 启动容器时运行start.sh
-ENTRYPOINT ["/home/steam/update_scripts.sh"] 
+ENTRYPOINT ["/home/steam/start.sh"] 

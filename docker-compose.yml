@@ -3,15 +3,13 @@ version: '3'
 services:
   server:
     build: .
-    container_name: xiaozhugame_server
+    container_name: game_container
+    #image: xiaozhu674/gameserver:latest  # 替换为你的镜像名称
     user: root                         # 使用root用户运行容器
     ports:
       # 默认开放的常用Steam游戏服务器端口
       - "27015-27020:27015-27020/tcp"  # Steam 匹配和RCON
       - "27015-27020:27015-27020/udp"  # 游戏流量 
-      - "7777:7777/udp"                # 额外游戏端口 (ARK等)
-      - "7778:7778/udp"                # 额外游戏端口
-      - "8211:8211/udp"                # Palworld
     volumes:
       - ./game_data:/home/steam/games  # 游戏数据
       - ./game_file:/home/steam/.config # 通用游戏存档路径1。请务必将此宿主目录权限设置为777
@@ -19,8 +17,6 @@ services:
     environment:
       - TZ=Asia/Shanghai              # 设置时区
       - AUTO_UPDATE=true              # 自动更新脚本 (true/false)
-      #- GAME_TO_RUN=Palworld         # 可选：直接启动指定游戏，无需进入菜单
-      #- GAME_ARGS="-port=8211 -players=32"  # 可选：游戏启动参数
     stdin_open: true                  # 保持STDIN打开
     tty: true                         # 分配TTY
     
