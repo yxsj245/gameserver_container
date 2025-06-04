@@ -102,6 +102,8 @@ RUN apt-get update && apt-get upgrade -y \
         zlib1g:i386 \
         fonts-wqy-zenhei \
         fonts-wqy-microhei \
+        libc6 \
+        libc6:i386 \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置 locales
