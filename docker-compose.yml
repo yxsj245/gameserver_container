@@ -17,6 +17,8 @@ services:
     environment:
       - TZ=Asia/Shanghai              # 设置时区
       - AUTO_UPDATE=true              # 自动更新脚本 (true/false)
+      - GAME_DIR=                     # 游戏目录路径 (可选，如果设置则自动执行)
+      - START_SCRIPT=                 # 启动脚本路径 (可选，如果设置则自动执行)
     stdin_open: true                  # 保持STDIN打开
     tty: true                         # 分配TTY
     
@@ -28,4 +30,4 @@ services:
     #       memory: 8G
     #     reservations:
     #       cpus: '2.0'
-    #       memory: 4G 
+    #       memory: 4G
