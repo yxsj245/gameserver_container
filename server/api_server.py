@@ -128,6 +128,8 @@ def ensure_auto_start_initialized():
     """确保自启动功能已初始化（用于Gunicorn启动）"""
     try:
         auto_start_servers()
+        # 打印当前运行的游戏服务器信息
+        log_running_games()
     except Exception as e:
         logger.error(f"初始化自启动功能时出错: {str(e)}")
 
@@ -1194,7 +1196,7 @@ def get_games():
                 # 设置5秒超时
                 cloud_games = validator.fetch_cloud_games()
                 if cloud_games:
-                    logger.debug(f"从云端获取到 {len(cloud_games)} 个游戏")
+                    logger.info(f"从云端获取到 {len(cloud_games)} 个游戏")
                     return jsonify({'status': 'success', 'games': cloud_games, 'source': 'cloud'})
             except Exception as cloud_err:
                 logger.error(f"从云端获取游戏列表失败: {str(cloud_err)}")
@@ -1217,7 +1219,7 @@ def get_games():
                 'url': game_info.get('url', '')
             })
         
-        logger.debug(f"从本地找到 {len(game_list)} 个游戏")
+        logger.info(f"从本地找到 {len(game_list)} 个游戏")
         response_data = {
             'status': 'success', 
             'games': game_list, 
@@ -1289,7 +1291,7 @@ def install_game():
         
         # 如果已经有正在运行的安装进程，则返回
         if game_id in active_installations and active_installations[game_id].get('process') and active_installations[game_id]['process'].poll() is None:
-            logger.debug(f"游戏 {game_id} 已经在安装中")
+            logger.info(f"游戏 {game_id} 已经在安装中")
             return jsonify({
                 'status': 'success', 
                 'message': f'游戏 {game_id} 已经在安装中'
@@ -1340,7 +1342,7 @@ def install_game():
         if password:
             cmd += f" --password {shlex.quote(password)}"
         cmd += " 2>&1'"
-        logger.debug(f"准备执行命令 (将使用PTY): {cmd}")
+        logger.info(f"准备执行命令 (将使用PTY): {cmd}")
         
         # 初始化安装状态跟踪
         active_installations[game_id] = {
@@ -2857,7 +2859,7 @@ def server_stream():
                             
                             # 截断长输出
                             if isinstance(line, str) and len(line) > 10000:
-                                logger.warning(f"输出行过长，已截断: {len(line)} 字符")
+                                logger.info(f"输出行过长，已截断: {len(line)} 字符")
                                 line = line[:10000] + "... (输出过长，已截断)"
                             
                             logger.debug(f"发送服务器输出 #{output_count}: {line[:100]}...")
@@ -6054,6 +6056,51 @@ CONFIG_FILE = "/home/steam/games/config.json"
 # 自启动功能初始化标志
 _auto_start_initialized = False
 
+def log_running_games():
+    """使用logger打印当前正在运行的游戏服务器信息"""
+    try:
+        if not running_servers:
+            logger.info("当前没有正在运行的游戏服务器")
+            return
+        
+        logger.info("=== 当前正在运行的游戏服务器 ===")
+        running_count = 0
+        
+        for game_id, server_data in running_servers.items():
+            process = server_data.get('process')
+            pty_process = server_data.get('pty_process')
+            started_at = server_data.get('started_at')
+            
+            # 检查进程是否真的在运行
+            is_running = False
+            pid = None
+            
+            if process and hasattr(process, 'poll') and process.poll() is None:
+                is_running = True
+                pid = process.pid
+            elif pty_process and hasattr(pty_process, 'process') and pty_process.process:
+                if hasattr(pty_process.process, 'poll') and pty_process.process.poll() is None:
+                    is_running = True
+                    pid = pty_process.process.pid
+            
+            if is_running:
+                running_count += 1
+                uptime = time.time() - started_at if started_at else 0
+                uptime_str = f"{int(uptime // 3600)}小时{int((uptime % 3600) // 60)}分钟" if uptime > 0 else "未知"
+                
+                logger.info(f"  游戏ID: {game_id}")
+                logger.info(f"    进程PID: {pid}")
+                logger.info(f"    运行时长: {uptime_str}")
+                logger.info(f"    启动时间: {datetime.datetime.fromtimestamp(started_at).strftime('%Y-%m-%d %H:%M:%S') if started_at else '未知'}")
+                logger.info(f"    是否有PTY: {'是' if pty_process else '否'}")
+            else:
+                logger.warning(f"  游戏ID: {game_id} - 进程已停止但仍在running_servers中")
+        
+        logger.info(f"=== 总计: {running_count} 个游戏服务器正在运行 ===")
+        
+    except Exception as e:
+        logger.error(f"打印运行中游戏服务器信息时出错: {str(e)}")
+
 def auto_start_servers():
     """在应用启动时自动启动配置的服务器"""
     global _auto_start_initialized
@@ -7797,6 +7844,9 @@ if __name__ == '__main__':
     
     # 启动自启动功能
     auto_start_servers()
+    
+    # 打印当前运行的游戏服务器信息
+    log_running_games()
     
     # 直接运行时使用Flask内置服务器，而不是通过Gunicorn导入时
     # 从环境变量读取端口配置，默认为5000
