@@ -161,14 +161,16 @@ export const installGame = async (
   onComplete: () => void,
   onError: (error: string) => void,
   account?: string,
-  password?: string
+  password?: string,
+  manifest?: string
 ): Promise<EventSource | null> => {
   try {
     // 1. 先请求安装
     const installResp = await api.post('/install', {
       game_id: gameId,
       ...(account ? { account } : {}),
-      ...(password ? { password } : {})
+      ...(password ? { password } : {}),
+      ...(manifest ? { manifest } : {})
     });
     if (installResp.data.status !== 'success') {
       onError(installResp.data.message || '安装请求失败');
@@ -238,7 +240,8 @@ export const installByAppId = async (
   onComplete: () => void,
   onError: (error: string) => void,
   account?: string,
-  password?: string
+  password?: string,
+  manifest?: string
 ): Promise<EventSource | null> => {
   try {
     // 1. 先请求安装
@@ -247,7 +250,8 @@ export const installByAppId = async (
       name: name,
       anonymous: anonymous,
       ...(account ? { account } : {}),
-      ...(password ? { password } : {})
+      ...(password ? { password } : {}),
+      ...(manifest ? { manifest } : {})
     });
     
     if (installResp.data.status !== 'success') {

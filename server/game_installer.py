@@ -59,7 +59,7 @@ def load_config():
         print(f"{RED}加载配置文件失败: {str(e)}{NC}")
         return {}
 
-def install_steam_game(app_id, game_name, use_custom_account=False, steam_account=None, steam_password=None):
+def install_steam_game(app_id, game_name, use_custom_account=False, steam_account=None, steam_password=None, manifest=None):
     install_dir = os.path.join(GAMES_DIR, game_name)
     print(f"{BLUE}================ 预检查 ================={NC}")
     print(f"{YELLOW}检查安装目录是否可写: {install_dir}{NC}")
@@ -103,7 +103,10 @@ def install_steam_game(app_id, game_name, use_custom_account=False, steam_accoun
         sys.exit(1)
 
     # 构建命令
-    cmd = f"{STEAMCMD_PATH} {login_cmd} +force_install_dir \"{install_dir}\" +app_update {app_id} validate +quit"
+    if manifest:
+        cmd = f"{STEAMCMD_PATH} {login_cmd} +force_install_dir \"{install_dir}\" +app_update {app_id} -manifest {manifest} validate +quit"
+    else:
+        cmd = f"{STEAMCMD_PATH} {login_cmd} +force_install_dir \"{install_dir}\" +app_update {app_id} validate +quit"
     
     print(f"{YELLOW}开始下载安装，这可能需要一段时间，请耐心等待...{NC}")
     print(f"{BLUE}================ 安装进度 ================={NC}")
@@ -181,10 +184,12 @@ def main():
     parser.add_argument('game_name', help='游戏英文名')
     parser.add_argument('--account', type=str, default=None, help='Steam账号')
     parser.add_argument('--password', type=str, default=None, help='Steam密码')
+    parser.add_argument('--manifest', type=str, default=None, help='版本号 (Manifest ID)')
     args = parser.parse_args()
     game_name = args.game_name
     steam_account = args.account
     steam_password = args.password
+    manifest = args.manifest
     
     # 首先检查游戏目录中是否存在cloud_script.sh，这表明可能是云端游戏
     install_dir = os.path.join(GAMES_DIR, game_name)
@@ -237,7 +242,7 @@ def main():
             if steam_account:
                 use_custom_account = True
                 
-            success = install_steam_game(appid, game_name, use_custom_account, steam_account, steam_password)
+            success = install_steam_game(appid, game_name, use_custom_account, steam_account, steam_password, manifest)
             if not success:
                 sys.exit(1)
                 
@@ -289,7 +294,7 @@ def main():
         sys.exit(1)
         
     use_custom_account = not anonymous
-    success = install_steam_game(appid, game_name, use_custom_account, steam_account, steam_password)
+    success = install_steam_game(appid, game_name, use_custom_account, steam_account, steam_password, manifest)
     if not success:
         sys.exit(1)
     
@@ -329,4 +334,4 @@ def main():
     print(f"{YELLOW}3. 重启容器并使用 root 用户: user: root{NC}")
 
 if __name__ == "__main__":
-    main() 
+    main()

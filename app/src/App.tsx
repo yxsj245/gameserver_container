@@ -916,6 +916,11 @@ const App: React.FC = () => {
   const [externalGames, setExternalGames] = useState<GameInfo[]>([]);  // 添加外部游戏状态
   const [tabKey, setTabKey] = useState<string>('install');
   const [accountModalVisible, setAccountModalVisible] = useState(false);
+  
+  // 添加调试信息监听accountModalVisible变化
+  useEffect(() => {
+    console.log('accountModalVisible changed to:', accountModalVisible);
+  }, [accountModalVisible]);
   const [accountForm] = Form.useForm();
   const [pendingInstallGame, setPendingInstallGame] = useState<GameInfo | null>(null);
   const [accountModalLoading, setAccountModalLoading] = useState<boolean>(false);
@@ -1391,7 +1396,7 @@ const App: React.FC = () => {
   }, [runningServers]);
 
   // 安装游戏的处理函数
-  const handleInstall = useCallback(async (game: GameInfo, account?: string, password?: string) => {
+  const handleInstall = useCallback(async (game: GameInfo, account?: string, password?: string, manifest?: string) => {
     setSelectedGame(game);
     setTerminalVisible(true);
     if (installOutputs[game.id]?.installing) {
@@ -1445,7 +1450,8 @@ const App: React.FC = () => {
           handleError(error);
         },
         account,
-        password
+        password,
+        manifest
       );
       return () => {
         if (eventSource) eventSource.close();
@@ -1545,39 +1551,58 @@ const App: React.FC = () => {
 
   // 处理"安装"按钮点击
   const handleInstallClick = (game: GameInfo) => {
+    console.log('handleInstallClick called with game:', game.name, 'anonymous:', game.anonymous);
     // 如果已经在安装中，不执行任何操作
     if (installOutputs[game.id]?.installing) {
+      console.log('Game is already installing, returning');
       return;
     }
     
-    if (game.anonymous === false) {
-      setPendingInstallGame(game);
-      setAccountModalVisible(true);
-      accountForm.resetFields();
-    } else {
-      handleInstall(game);
-    }
+    // 所有游戏都显示弹窗，让用户可以选择是否输入账号密码和版本号
+    console.log('Showing modal for all games');
+    setPendingInstallGame(game);
+    setAccountModalVisible(true);
+    accountForm.resetFields();
   };
 
   // 提交账号密码表单
   const onAccountModalOk = async () => {
     try {
-      // 验证表单
-      const values = await accountForm.validateFields();
-      
-      if (pendingInstallGame) {
-        // 关闭模态框
-        setAccountModalVisible(false);
+      // 对于需要登录的游戏，验证必填字段
+      if (pendingInstallGame?.anonymous === false) {
+        const values = await accountForm.validateFields();
+        console.log('表单验证通过，提交的值:', values);
         
-        // 使用表单中的账号密码安装游戏
-        handleInstall(pendingInstallGame, values.account, values.password);
+        if (pendingInstallGame) {
+          // 关闭模态框
+          setAccountModalVisible(false);
+          
+          // 使用表单中的账号密码和版本号安装游戏
+          handleInstall(pendingInstallGame, values.account, values.password, values.manifest);
+          
+          // 清空待安装游戏
+          setPendingInstallGame(null);
+        }
+      } else {
+        // 对于匿名游戏，只获取版本号（不需要验证）
+        const values = accountForm.getFieldsValue();
+        console.log('匿名游戏安装，提交的值:', values);
         
-        // 清空待安装游戏
-        setPendingInstallGame(null);
+        if (pendingInstallGame) {
+          // 关闭模态框
+          setAccountModalVisible(false);
+          
+          // 使用版本号安装游戏（账号密码为undefined）
+          handleInstall(pendingInstallGame, undefined, undefined, values.manifest);
+          
+          // 清空待安装游戏
+          setPendingInstallGame(null);
+        }
       }
     } catch (error) {
-      // 表单验证失败
-      console.error('表单验证失败:', error);
+      // 处理错误
+      console.error('表单操作失败:', error);
+      message.error('表单操作失败');
     }
   };
 
@@ -2563,7 +2588,8 @@ const App: React.FC = () => {
           handleError(error);
         },
         !values.anonymous ? values.account : undefined,
-        !values.anonymous ? values.password : undefined
+        !values.anonymous ? values.password : undefined,
+        values.manifest
       );
       
       // 创建一个临时游戏对象用于显示
@@ -3157,7 +3183,7 @@ const App: React.FC = () => {
               style={{ fontSize: '16px', padding: '0 8px' }}
             />
             <div className="header-title">
-              GameServerManager
+              <img src="/logo/logo.png" alt="GameServerManager" style={{ height: '32px', objectFit: 'contain' }} />
             </div>
             <div className="user-info">
               <Tooltip title={enableRandomBackground ? "关闭随机背景" : "开启随机背景"}>
@@ -3205,7 +3231,7 @@ const App: React.FC = () => {
             bodyStyle={{ padding: 0 }}
           >
             <div className="logo">
-              <CloudServerOutlined /> <span>GSManager</span>
+              <img src="/logo/logo2.png" alt="GSManager" style={{ height: '50px', objectFit: 'contain' }} />
             </div>
             <Menu
               theme="light"
@@ -3281,7 +3307,7 @@ const App: React.FC = () => {
         collapsedWidth="var(--sider-collapsed-width)"
       >
         <div className="logo">
-          <CloudServerOutlined /> {!collapsed && <span>GSManager</span>}
+          <img src="/logo/logo2.png" alt="GSManager" style={{ height: '50px', objectFit: 'contain' }} />
         </div>
         <Menu
           theme="light"
@@ -3351,7 +3377,7 @@ const App: React.FC = () => {
         {!isMobile && (
         <Header className="site-header">
           <div className="header-title">
-            GameServerManager
+            <img src="/logo/logo.png" alt="GameServerManager" style={{ height: '60px', width: '200px', objectFit: 'contain' }} />
           </div>
           <div className="user-info">
             <Tooltip title={enableRandomBackground ? "关闭随机背景" : "开启随机背景"}>
@@ -3510,6 +3536,13 @@ const App: React.FC = () => {
                           rules={[{ required: true, message: '请输入游戏名称' }]}
                         >
                           <Input placeholder="请输入游戏名称，用于显示" />
+                        </Form.Item>
+                        <Form.Item
+                          name="manifest"
+                          label="版本号 (可选)"
+                          extra="输入特定版本的Manifest ID，例如: 10740013。留空则安装最新版本。"
+                        >
+                          <Input placeholder="请输入版本号，例如: 10740013" />
                         </Form.Item>
                         <Form.Item
                           name="anonymous"
@@ -4377,36 +4410,7 @@ const App: React.FC = () => {
 
       {/* 账号输入Modal */}
       <Modal
-        title="输入Steam账号"
-        open={accountModalVisible}
-        onOk={onAccountModalOk}
-        onCancel={() => {
-          setAccountModalVisible(false);
-          setPendingInstallGame(null);
-        }}
-        confirmLoading={accountModalLoading}
-      >
-        <Form form={accountForm}>
-          <Form.Item
-            name="username"
-            label="Steam用户名"
-            rules={[{ required: true, message: '请输入Steam用户名!' }]}
-          >
-            <Input placeholder="请输入Steam用户名" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label="Steam密码"
-            rules={[{ required: true, message: '请输入Steam密码!' }]}
-          >
-            <Input.Password placeholder="请输入Steam密码" />
-           </Form.Item>
-         </Form>
-       </Modal>
-
-      {/* 账号输入Modal */}
-      <Modal
-        title="输入Steam账号"
+        title={`安装游戏 - ${pendingInstallGame?.name || ''}`}
         open={accountModalVisible}
         onOk={onAccountModalOk}
         onCancel={() => {
@@ -4417,19 +4421,35 @@ const App: React.FC = () => {
         cancelText="取消"
       >
         <Form form={accountForm} layout="vertical">
+          {/* 对于需要登录的游戏显示账号密码字段 */}
+          {pendingInstallGame?.anonymous === false && (
+            <>
+              <Form.Item
+                name="account"
+                label="Steam账号"
+                rules={[{ required: true, message: '请输入Steam账号' }]}
+                extra="此游戏需要正版账号"
+              >
+                <Input placeholder="输入您的Steam账号" />
+              </Form.Item>
+              <Form.Item
+                name="password"
+                label="密码"
+                rules={[{ required: true, message: '请输入密码' }]}
+                extra="如您的账号启用了二步验证，安装过程中会提示您输入Steam Guard码"
+              >
+                <Input.Password placeholder="输入密码" />
+              </Form.Item>
+            </>
+          )}
+          
+          {/* 版本号字段对所有游戏都显示 */}
           <Form.Item
-            name="account"
-            label="Steam账号"
-            rules={[{ required: true, message: '请输入Steam账号' }]}
+            name="manifest"
+            label="版本号 (可选)"
+            extra="指定游戏版本的Manifest ID，留空则安装最新版本"
           >
-            <Input placeholder="输入您的Steam账号" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label="密码 (可选)"
-            extra="如您的账号启用了二步验证，安装过程中会提示您输入Steam Guard码"
-          >
-            <Input.Password placeholder="输入密码 (可选)" />
+            <Input placeholder="例如: 10740013" />
           </Form.Item>
         </Form>
       </Modal>

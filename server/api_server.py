@@ -1299,6 +1299,7 @@ def install_game():
         game_id = data.get('game_id')
         account = data.get('account')
         password = data.get('password')
+        manifest = data.get('manifest')
         if not game_id:
             logger.error("缺少游戏ID")
             return jsonify({'status': 'error', 'message': '缺少游戏ID'}), 400
@@ -1385,6 +1386,8 @@ def install_game():
             cmd += f" --account {shlex.quote(account)}"
         if password:
             cmd += f" --password {shlex.quote(password)}"
+        if manifest:
+            cmd += f" --manifest {shlex.quote(manifest)}"
         cmd += " 2>&1'"
         logger.info(f"准备执行命令 (将使用PTY): {cmd}")
         
@@ -4223,6 +4226,7 @@ def install_by_appid():
         anonymous = data.get('anonymous', True)
         account = data.get('account')
         password = data.get('password')
+        manifest = data.get('manifest')
         
         if not app_id or not game_name:
             logger.error("缺少AppID或游戏名称")
@@ -4268,6 +4272,9 @@ def install_by_appid():
             cmd += f" --account {shlex.quote(account)}"
             if password:
                 cmd += f" --password {shlex.quote(password)}"
+        
+        if manifest:
+            cmd += f" --manifest {shlex.quote(manifest)}"
         
         cmd += " 2>&1'"
         
@@ -7331,8 +7338,11 @@ JAVA_VERSIONS = {
 os.makedirs(ENVIRONMENT_DIR, exist_ok=True)
 os.makedirs(JAVA_DIR, exist_ok=True)
 
-# 环境安装进度跟踪
-environment_install_progress = {}
+# 环境安装进度跟踪 - 使用共享字典解决多进程状态同步问题
+# 创建专门用于Java安装的multiprocessing.Manager
+java_manager = multiprocessing.Manager()
+java_install_progress = java_manager.dict()  # 专门用于Java安装进度的共享字典
+environment_install_progress = {}  # 保留原有字典用于其他环境安装
 
 # Java下载并发控制
 java_download_lock = threading.Lock()
@@ -7458,13 +7468,13 @@ def install_java(version="jdk8"):
         # 设置当前下载的版本
         current_java_download = version
     
-    # 初始化进度和取消标志
-    environment_install_progress[version] = {
+    # 初始化进度和取消标志 - 使用共享字典
+    java_install_progress[version] = java_manager.dict({
         "progress": 0,
         "status": "downloading",
         "completed": False,
         "error": None
-    }
+    })
     java_download_cancelled[version] = False
     
     # 使用独立进程执行安装，避免GIL锁竞争
@@ -7515,13 +7525,13 @@ def _monitor_java_install_process(version, process, install_queue):
                     if process.is_alive():
                         process.kill()
                     
-                    environment_install_progress[version]["status"] = "cancelled"
-                    environment_install_progress[version]["error"] = "安装已被用户取消"
-                    environment_install_progress[version]["completed"] = True
+                    java_install_progress[version]["status"] = "cancelled"
+                    java_install_progress[version]["error"] = "安装已被用户取消"
+                    java_install_progress[version]["completed"] = True
                     break
                 
                 # 更新进度数据
-                environment_install_progress[version].update(progress_data)
+                java_install_progress[version].update(progress_data)
                 
                 # 如果安装完成或出错，退出循环
                 if progress_data.get('completed', False):
@@ -7546,14 +7556,14 @@ def _monitor_java_install_process(version, process, install_queue):
                 process.kill()
             
             # 设置错误状态
-            environment_install_progress[version]["status"] = "error"
-            environment_install_progress[version]["error"] = "安装进程超时"
-            environment_install_progress[version]["completed"] = True
+            java_install_progress[version]["status"] = "error"
+            java_install_progress[version]["error"] = "安装进程超时"
+            java_install_progress[version]["completed"] = True
     except Exception as e:
         logger.error(f"监控Java安装进程时出错: {str(e)}")
-        environment_install_progress[version]["status"] = "error"
-        environment_install_progress[version]["error"] = str(e)
-        environment_install_progress[version]["completed"] = True
+        java_install_progress[version]["status"] = "error"
+        java_install_progress[version]["error"] = str(e)
+        java_install_progress[version]["completed"] = True
     finally:
         # 重置当前下载状态
         with java_download_lock:
@@ -7570,12 +7580,14 @@ def get_java_status():
         version = request.args.get('version', 'jdk8')
         installed, java_version = check_java_installation(version)
         
-        # 获取安装进度
-        progress_info = environment_install_progress.get(version, {
+        # 获取安装进度 - 使用共享字典
+        progress_info_proxy = java_install_progress.get(version, java_manager.dict({
             "progress": 0,
             "status": "not_started",
             "completed": False
-        })
+        }))
+        # 将共享字典代理对象转换为普通字典，确保jsonify能正常工作
+        progress_info = dict(progress_info_proxy)
         
         # 如果已安装但进度信息不完整，补充信息
         if installed and not progress_info.get("completed"):
@@ -7700,7 +7712,7 @@ def uninstall_java_route():
             logger.info(f"已卸载{JAVA_VERSIONS[version]['display_name']}: {java_dir}")
         
         # 清理进度信息
-        environment_install_progress.pop(version, None)
+        java_install_progress.pop(version, None)
         
         return jsonify({
             "status": "success",

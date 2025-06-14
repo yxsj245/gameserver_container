@@ -37,7 +37,7 @@ fi
 echo "前端已构建，dist目录存在"
 
 # 从环境变量读取配置，如果没有则使用默认值
-WORKERS=${GUNICORN_WORKERS:-1}
+WORKERS=1
 TIMEOUT=${GUNICORN_TIMEOUT:-120}
 PORT=${GUNICORN_PORT:-5000}
 USE_GUNICORN=${USE_GUNICORN:-true}

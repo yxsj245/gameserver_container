@@ -384,6 +384,18 @@ body {
   font-size: 20px;
   font-weight: bold;
   color: #1677ff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.header-title img {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.header-title:hover img {
+  transform: scale(1.05);
+  filter: drop-shadow(0 0 4px rgba(22, 119, 255, 0.4));
 }
 
 .logo {
@@ -402,6 +414,10 @@ body {
   margin: 8px;
   position: relative;
   overflow: hidden;
+}
+
+.logo img {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .logo:hover {
@@ -432,6 +448,16 @@ body {
 .logo:active .anticon {
   transform: scale(0.9) rotate(-5deg);
   color: #0958d9;
+  filter: drop-shadow(0 0 6px rgba(22, 119, 255, 0.6));
+}
+
+.logo:hover img {
+  transform: scale(1.1);
+  filter: drop-shadow(0 0 4px rgba(22, 119, 255, 0.4));
+}
+
+.logo:active img {
+  transform: scale(0.9);
   filter: drop-shadow(0 0 6px rgba(22, 119, 255, 0.6));
 }
 
@@ -724,6 +750,9 @@ body {
     text-align: center;
     white-space: nowrap;
     overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
     text-overflow: ellipsis;
   }
   
@@ -2193,7 +2222,6 @@ body {
 }
 
 /* 补充下拉菜单、通知、输入框等组件的毛玻璃效果 */
-.ant-dropdown-menu,
 /* 消息通知样式 - 现代化右上角通知 */
 .ant-message {
     position: fixed !important;
