@@ -4275,7 +4275,7 @@ const App: React.FC = () => {
             </div>
           )}
         </Content>
-        <Footer style={{ textAlign: 'center' }}>GameServerManager ©2025 又菜又爱玩的小朱 最后更新日期2025.6.13</Footer>
+        <Footer style={{ textAlign: 'center' }}>GameServerManager ©2025 又菜又爱玩的小朱 最后更新日期2025.6.15-预览版</Footer>
       </Layout>
 
       {/* 安装终端Modal */}
