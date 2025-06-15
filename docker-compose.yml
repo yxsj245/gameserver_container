@@ -26,6 +26,8 @@ services:
       - USE_GUNICORN=true             # 强制使用Gunicorn
       - GUNICORN_TIMEOUT=120          # Gunicorn超时设置
       - GUNICORN_PORT=5000            # Gunicorn监听端口
+      # - CUSTOM_RUN_DIR=/home/steam/custom    # 自定义运行目录
+      # - CUSTOM_RUN_SCRIPT=./start.sh         # 自定义运行脚本（相对于CUSTOM_RUN_DIR）
     command: /home/steam/start_web.sh  # 启动Web界面
     stdin_open: true                  # 保持STDIN打开
     tty: true                         # 分配TTY

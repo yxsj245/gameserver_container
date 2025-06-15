@@ -2,6 +2,40 @@
 
 echo "==== 启动游戏服务器网页部署界面 ===="
 
+# 检查自定义环境变量
+if [ ! -z "$CUSTOM_RUN_DIR" ] && [ ! -z "$CUSTOM_RUN_SCRIPT" ]; then
+    echo "检测到自定义运行环境变量:"
+    echo "运行目录: $CUSTOM_RUN_DIR"
+    echo "运行脚本: $CUSTOM_RUN_SCRIPT"
+    
+    # 检查目录是否存在
+    if [ ! -d "$CUSTOM_RUN_DIR" ]; then
+        echo "错误: 自定义运行目录不存在: $CUSTOM_RUN_DIR"
+        exit 1
+    fi
+    
+    # 切换到自定义目录
+    cd "$CUSTOM_RUN_DIR"
+    echo "已切换到目录: $(pwd)"
+    
+    # 检查脚本是否存在
+    if [ ! -f "$CUSTOM_RUN_SCRIPT" ]; then
+        echo "错误: 自定义运行脚本不存在: $CUSTOM_RUN_SCRIPT"
+        exit 1
+    fi
+    
+    # 检查脚本是否可执行
+    if [ ! -x "$CUSTOM_RUN_SCRIPT" ]; then
+        echo "设置脚本执行权限: $CUSTOM_RUN_SCRIPT"
+        chmod +x "$CUSTOM_RUN_SCRIPT"
+    fi
+    
+    echo "启动自定义脚本: $CUSTOM_RUN_SCRIPT"
+    exec "$CUSTOM_RUN_SCRIPT"
+fi
+
+echo "使用默认启动模式"
+
 # 信号处理函数
 cleanup() {
     echo "收到退出信号，正在优雅关闭Gunicorn..."
@@ -37,7 +71,7 @@ fi
 echo "前端已构建，dist目录存在"
 
 # 从环境变量读取配置，如果没有则使用默认值
-WORKERS=${GUNICORN_WORKERS:-1}
+WORKERS=1
 TIMEOUT=${GUNICORN_TIMEOUT:-120}
 PORT=${GUNICORN_PORT:-5000}
 USE_GUNICORN=${USE_GUNICORN:-true}

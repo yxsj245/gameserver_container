@@ -48,6 +48,8 @@ from sponsor_validator import SponsorValidator
 from java_installer import install_java_worker
 # 导入Docker管理器
 from docker_manager import docker_manager
+# 导入Minecraft整合包安装器
+from minecraft_modpack_installer import MinecraftModpackInstaller
 
 # 输出管理函数
 def add_server_output(game_id, message, max_lines=500):
@@ -7331,8 +7333,11 @@ JAVA_VERSIONS = {
 os.makedirs(ENVIRONMENT_DIR, exist_ok=True)
 os.makedirs(JAVA_DIR, exist_ok=True)
 
-# 环境安装进度跟踪
-environment_install_progress = {}
+# 环境安装进度跟踪 - 使用共享字典解决多进程状态同步问题
+# 创建专门用于Java安装的multiprocessing.Manager
+java_manager = multiprocessing.Manager()
+java_install_progress = java_manager.dict()  # 专门用于Java安装进度的共享字典
+environment_install_progress = {}  # 保留原有字典用于其他环境安装
 
 # Java下载并发控制
 java_download_lock = threading.Lock()
@@ -7458,13 +7463,13 @@ def install_java(version="jdk8"):
         # 设置当前下载的版本
         current_java_download = version
     
-    # 初始化进度和取消标志
-    environment_install_progress[version] = {
+    # 初始化进度和取消标志 - 使用共享字典
+    java_install_progress[version] = java_manager.dict({
         "progress": 0,
         "status": "downloading",
         "completed": False,
         "error": None
-    }
+    })
     java_download_cancelled[version] = False
     
     # 使用独立进程执行安装，避免GIL锁竞争
@@ -7515,13 +7520,13 @@ def _monitor_java_install_process(version, process, install_queue):
                     if process.is_alive():
                         process.kill()
                     
-                    environment_install_progress[version]["status"] = "cancelled"
-                    environment_install_progress[version]["error"] = "安装已被用户取消"
-                    environment_install_progress[version]["completed"] = True
+                    java_install_progress[version]["status"] = "cancelled"
+                    java_install_progress[version]["error"] = "安装已被用户取消"
+                    java_install_progress[version]["completed"] = True
                     break
                 
                 # 更新进度数据
-                environment_install_progress[version].update(progress_data)
+                java_install_progress[version].update(progress_data)
                 
                 # 如果安装完成或出错，退出循环
                 if progress_data.get('completed', False):
@@ -7546,14 +7551,14 @@ def _monitor_java_install_process(version, process, install_queue):
                 process.kill()
             
             # 设置错误状态
-            environment_install_progress[version]["status"] = "error"
-            environment_install_progress[version]["error"] = "安装进程超时"
-            environment_install_progress[version]["completed"] = True
+            java_install_progress[version]["status"] = "error"
+            java_install_progress[version]["error"] = "安装进程超时"
+            java_install_progress[version]["completed"] = True
     except Exception as e:
         logger.error(f"监控Java安装进程时出错: {str(e)}")
-        environment_install_progress[version]["status"] = "error"
-        environment_install_progress[version]["error"] = str(e)
-        environment_install_progress[version]["completed"] = True
+        java_install_progress[version]["status"] = "error"
+        java_install_progress[version]["error"] = str(e)
+        java_install_progress[version]["completed"] = True
     finally:
         # 重置当前下载状态
         with java_download_lock:
@@ -7570,12 +7575,14 @@ def get_java_status():
         version = request.args.get('version', 'jdk8')
         installed, java_version = check_java_installation(version)
         
-        # 获取安装进度
-        progress_info = environment_install_progress.get(version, {
+        # 获取安装进度 - 使用共享字典
+        progress_info_proxy = java_install_progress.get(version, java_manager.dict({
             "progress": 0,
             "status": "not_started",
             "completed": False
-        })
+        }))
+        # 将共享字典代理对象转换为普通字典，确保jsonify能正常工作
+        progress_info = dict(progress_info_proxy)
         
         # 如果已安装但进度信息不完整，补充信息
         if installed and not progress_info.get("completed"):
@@ -7700,7 +7707,7 @@ def uninstall_java_route():
             logger.info(f"已卸载{JAVA_VERSIONS[version]['display_name']}: {java_dir}")
         
         # 清理进度信息
-        environment_install_progress.pop(version, None)
+        java_install_progress.pop(version, None)
         
         return jsonify({
             "status": "success",
@@ -8309,6 +8316,7 @@ def deploy_minecraft_server():
         core_version = data.get('core_version')
         custom_name = data.get('custom_name', server_name)
         selected_jdk = data.get('selected_jdk')  # 新增JDK选择参数
+        deploy_mode = data.get('deploy_mode', 'new')  # 新增部署模式参数，默认为新建
         
         if not all([server_name, mc_version, core_version]):
             return jsonify({
@@ -8316,9 +8324,9 @@ def deploy_minecraft_server():
                 'message': '缺少必要参数: server_name, mc_version, core_version'
             }), 400
         
-        # 确定Java可执行文件路径
+        # 确定Java可执行文件路径（仅在新建模式下需要）
         java_executable = 'java'  # 默认使用系统Java
-        if selected_jdk:
+        if deploy_mode == 'new' and selected_jdk:
             if selected_jdk in JAVA_VERSIONS:
                 installed, _ = check_java_installation(selected_jdk)
                 if installed:
@@ -8366,41 +8374,54 @@ def deploy_minecraft_server():
                     f.write(chunk)
                     downloaded += len(chunk)
         
-        # 创建启动脚本，使用选择的JDK
-        start_script_content = f"""#!/bin/bash
+        # 只有在新建模式下才创建启动脚本和配置文件
+        if deploy_mode == 'new':
+            # 创建启动脚本，使用选择的JDK
+            start_script_content = f"""#!/bin/bash
 cd "$(dirname "$0")"
 {java_executable} -Xmx2G -Xms1G -jar {filename} nogui
 """
-        
-        start_script_path = os.path.join(game_dir, 'start.sh')
-        with open(start_script_path, 'w') as f:
-            f.write(start_script_content)
-        
-        # 设置执行权限
-        os.chmod(start_script_path, 0o755)
-        
-        # 创建eula.txt文件
-        eula_path = os.path.join(game_dir, 'eula.txt')
-        with open(eula_path, 'w') as f:
-            f.write('eula=true\n')
+            
+            start_script_path = os.path.join(game_dir, 'start.sh')
+            with open(start_script_path, 'w') as f:
+                f.write(start_script_content)
+            
+            # 设置执行权限
+            os.chmod(start_script_path, 0o755)
+            
+            # 创建eula.txt文件
+            eula_path = os.path.join(game_dir, 'eula.txt')
+            with open(eula_path, 'w') as f:
+                f.write('eula=true\n')
         
         # 设置目录权限
         subprocess.run(['chown', '-R', 'steam:steam', game_dir], check=False)
         
-        logger.info(f"Minecraft服务端部署完成: {game_dir}，使用JDK: {java_executable}")
+        if deploy_mode == 'new':
+            logger.info(f"Minecraft服务端部署完成: {game_dir}，使用JDK: {java_executable}")
+            message_text = 'Minecraft服务端部署成功'
+        else:
+            logger.info(f"Minecraft服务端核心文件下载完成: {game_dir}")
+            message_text = 'Minecraft服务端核心文件下载成功'
+        
+        response_data = {
+            'game_dir': game_dir,
+            'filename': filename,
+            'server_name': server_name,
+            'mc_version': mc_version,
+            'core_version': core_version,
+            'deploy_mode': deploy_mode
+        }
+        
+        # 只有在新建模式下才返回JDK相关信息
+        if deploy_mode == 'new':
+            response_data['java_executable'] = java_executable
+            response_data['selected_jdk'] = selected_jdk
         
         return jsonify({
             'status': 'success',
-            'message': f'Minecraft服务端部署成功',
-            'data': {
-                'game_dir': game_dir,
-                'filename': filename,
-                'server_name': server_name,
-                'mc_version': mc_version,
-                'core_version': core_version,
-                'java_executable': java_executable,
-                'selected_jdk': selected_jdk
-            }
+            'message': message_text,
+            'data': response_data
         })
         
     except Exception as e:
@@ -8409,6 +8430,339 @@ cd "$(dirname "$0")"
             'status': 'error',
             'message': f'部署失败: {str(e)}'
         }), 500
+
+@app.route('/api/minecraft/modpack/search', methods=['GET'])
+@auth_required
+def search_modpacks():
+    """搜索Minecraft整合包"""
+    try:
+        query = request.args.get('query', '')
+        max_results = int(request.args.get('max_results', 20))
+        
+        installer = MinecraftModpackInstaller()
+        modpacks = installer.cli.search_modpacks(query=query, max_results=max_results)
+        
+        # 验证返回数据格式
+        if not isinstance(modpacks, list):
+            logger.error(f"搜索整合包返回数据格式错误: 期望列表，收到 {type(modpacks)}")
+            return jsonify({
+                'status': 'error',
+                'message': '搜索结果格式错误'
+            }), 500
+        
+        return jsonify({
+            'status': 'success',
+            'data': modpacks
+        })
+        
+    except Exception as e:
+        logger.error(f"搜索整合包失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'搜索失败: {str(e)}'
+        }), 500
+
+@app.route('/api/minecraft/modpack/<modpack_id>/versions', methods=['GET'])
+@auth_required
+def get_modpack_versions(modpack_id):
+    """获取整合包版本列表"""
+    try:
+        installer = MinecraftModpackInstaller()
+        versions = installer.cli.get_modpack_versions(modpack_id)
+        
+        return jsonify({
+            'status': 'success',
+            'data': versions
+        })
+        
+    except Exception as e:
+        logger.error(f"获取整合包版本失败: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'获取版本失败: {str(e)}'
+        }), 500
+
+# Minecraft整合包部署相关的全局变量
+active_modpack_deployments = manager.dict()  # deployment_id -> deployment_data
+modpack_deploy_queues = manager.dict()  # deployment_id -> queue
+
+@app.route('/api/minecraft/modpack/deploy', methods=['POST'])
+@auth_required
+def deploy_minecraft_modpack():
+    """启动Minecraft整合包部署"""
+    try:
+        data = request.get_json()
+        modpack_id = data.get('modpack_id')
+        version_id = data.get('version_id')
+        folder_name = data.get('folder_name')
+        java_version = data.get('java_version', 'system')
+        
+        if not all([modpack_id, version_id, folder_name]):
+            return jsonify({
+                'status': 'error',
+                'message': '缺少必要参数: modpack_id, version_id, folder_name'
+            }), 400
+        
+        # 验证文件夹名称
+        if any(char in folder_name for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+            return jsonify({
+                'status': 'error',
+                'message': '文件夹名称包含非法字符'
+            }), 400
+        
+        # 检查文件夹是否已存在
+        install_path = os.path.join('/home/steam/games', folder_name)
+        if os.path.exists(install_path):
+            return jsonify({
+                'status': 'error',
+                'message': f'文件夹 {folder_name} 已存在'
+            }), 400
+        
+        # 验证Java版本
+        installer = MinecraftModpackInstaller()
+        if java_version != 'system' and java_version not in installer.java_versions:
+            return jsonify({
+                'status': 'error',
+                'message': f'不支持的Java版本: {java_version}'
+            }), 400
+        
+        if java_version != 'system':
+            installed, _ = installer.check_java_installation(java_version)
+            if not installed:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Java版本 {java_version} 未安装，请先安装对应的Java版本后再进行操作'
+                }), 400
+        
+        # 获取整合包信息
+        modpack_data = installer.cli.get_modpack_details(modpack_id)
+        if not modpack_data:
+            return jsonify({
+                'status': 'error',
+                'message': '获取整合包信息失败'
+            }), 500
+        
+        # 获取版本信息
+        versions = installer.cli.get_modpack_versions(modpack_id)
+        version_data = None
+        for version in versions:
+            if version['id'] == version_id:
+                version_data = version
+                break
+        
+        if not version_data:
+            return jsonify({
+                'status': 'error',
+                'message': '找不到指定的版本'
+            }), 400
+        
+        # 生成部署ID
+        deployment_id = f"modpack_{int(time.time())}_{folder_name}"
+        
+        # 检查是否已有部署在进行
+        if deployment_id in active_modpack_deployments:
+            return jsonify({
+                'status': 'error',
+                'message': f'整合包 {folder_name} 正在部署中，请等待完成'
+            }), 400
+        
+        # 初始化部署状态
+        deployment_data = manager.dict()
+        deployment_data['modpack_name'] = modpack_data['title']
+        deployment_data['folder_name'] = folder_name
+        deployment_data['status'] = 'starting'
+        deployment_data['progress'] = 0
+        deployment_data['message'] = '正在准备部署...'
+        deployment_data['complete'] = False
+        deployment_data['start_time'] = time.time()
+        active_modpack_deployments[deployment_id] = deployment_data
+        
+        deploy_queue = manager.Queue()
+        modpack_deploy_queues[deployment_id] = deploy_queue
+        
+        # 启动部署进程
+        deploy_process = multiprocessing.Process(
+            target=_deploy_modpack_worker,
+            args=(deployment_id, modpack_data, version_data, folder_name, java_version, deployment_data, deploy_queue),
+            daemon=True
+        )
+        deploy_process.start()
+        
+        logger.info(f"开始部署整合包: {modpack_data['title']} v{version_data['version_number']} 到 {folder_name}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'开始部署整合包 {modpack_data["title"]}',
+            'deployment_id': deployment_id
+        })
+        
+    except Exception as e:
+        logger.error(f"启动整合包部署时发生错误: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'启动部署时发生错误: {str(e)}'
+        }), 500
+
+def _deploy_modpack_worker(deployment_id, modpack_data, version_data, folder_name, java_version, deployment_data, deploy_queue):
+    """整合包部署工作进程"""
+    try:
+        installer = MinecraftModpackInstaller()
+        
+        def progress_callback(progress_data):
+            """进度回调函数"""
+            deployment_data['progress'] = progress_data['progress']
+            deployment_data['message'] = progress_data['message']
+            deployment_data['status'] = progress_data.get('status', 'installing')
+            deploy_queue.put(progress_data)
+        
+        # 执行安装
+        result = installer.install_modpack(
+            modpack_data,
+            version_data,
+            folder_name,
+            java_version,
+            progress_callback
+        )
+        
+        if result['success']:
+            deployment_data['status'] = 'completed'
+            deployment_data['progress'] = 100
+            deployment_data['message'] = '整合包部署成功'
+            deployment_data['complete'] = True
+            deployment_data['data'] = result['data']
+            
+            deploy_queue.put({
+                'progress': 100,
+                'status': 'completed',
+                'message': '整合包部署成功',
+                'complete': True,
+                'data': result['data']
+            })
+            
+            logger.info(f"整合包部署成功: {folder_name}")
+        else:
+            error_msg = f'部署失败: {result["message"]}'
+            deployment_data['status'] = 'error'
+            deployment_data['message'] = error_msg
+            deployment_data['complete'] = True
+            
+            deploy_queue.put({
+                'progress': deployment_data['progress'],
+                'status': 'error',
+                'message': error_msg,
+                'complete': True
+            })
+            
+            logger.error(f"整合包部署失败: {result['message']}")
+            
+    except Exception as e:
+        error_msg = f'部署时发生错误: {str(e)}'
+        logger.error(f"整合包部署时发生错误: {str(e)}", exc_info=True)
+        deployment_data['status'] = 'error'
+        deployment_data['message'] = error_msg
+        deployment_data['complete'] = True
+        deploy_queue.put({
+            'progress': deployment_data.get('progress', 0),
+            'status': 'error',
+            'message': error_msg,
+            'complete': True
+        })
+
+@app.route('/api/minecraft/modpack/deploy/stream', methods=['GET'])
+@auth_required
+def modpack_deploy_stream():
+    """获取整合包部署的实时进度"""
+    # 在请求上下文中获取参数
+    deployment_id = request.args.get('deployment_id')
+    if not deployment_id:
+        return jsonify({'error': '缺少deployment_id参数'}), 400
+    
+    def generate(deployment_id):
+        try:
+            
+            # 检查部署是否存在
+            if deployment_id not in active_modpack_deployments:
+                yield f"data: {json.dumps({'error': f'部署任务 {deployment_id} 不存在'})}\n\n"
+                return
+            
+            if deployment_id not in modpack_deploy_queues:
+                modpack_deploy_queues[deployment_id] = manager.Queue()
+            
+            # 如果部署已完成，添加完成消息
+            deployment_data = active_modpack_deployments[deployment_id]
+            if deployment_data.get('complete', False):
+                modpack_deploy_queues[deployment_id].put({
+                    'progress': deployment_data.get('progress', 100),
+                    'status': deployment_data.get('status', 'completed'),
+                    'message': deployment_data.get('message', '部署已完成'),
+                    'complete': True,
+                    'data': deployment_data.get('data')
+                })
+            
+            deployment_data = active_modpack_deployments[deployment_id]
+            deploy_queue = modpack_deploy_queues[deployment_id]
+            
+            # 发送初始连接消息
+            yield f"data: {json.dumps({'message': '连接成功，开始接收部署进度...', 'progress': deployment_data.get('progress', 0), 'status': deployment_data.get('status', 'starting')})}\n\n"
+            
+            # 持续监听进度更新
+            timeout_count = 0
+            max_timeout = 300  # 5分钟超时
+            
+            while timeout_count < max_timeout:
+                try:
+                    # 尝试从队列获取进度更新
+                    item = deploy_queue.get(timeout=1)
+                    timeout_count = 0  # 重置超时计数
+                    
+                    # 发送进度更新
+                    yield f"data: {json.dumps(item)}\n\n"
+                    
+                    # 如果部署完成，结束流
+                    if item.get('complete', False):
+                        break
+                        
+                except:
+                    timeout_count += 1
+                    continue
+            
+            if timeout_count >= max_timeout:
+                logger.warning(f"整合包部署 {deployment_id} 的流超时")
+                yield f"data: {json.dumps({'message': '部署流超时，请刷新页面查看最新状态', 'status': 'timeout', 'complete': True})}\n\n"
+            
+            # 检查部署是否已完成但未发送完成消息
+            if deployment_data.get('complete', False):
+                final_data = {
+                    'progress': deployment_data.get('progress', 100),
+                    'status': deployment_data.get('status', 'completed'),
+                    'message': deployment_data.get('message', '部署已完成'),
+                    'complete': True
+                }
+                if deployment_data.get('data'):
+                    final_data['data'] = deployment_data['data']
+                
+                yield f"data: {json.dumps(final_data)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"生成整合包部署流数据时出错: {str(e)}")
+            yield f"data: {json.dumps({'error': f'生成流数据时出错: {str(e)}'})}\n\n"
+        finally:
+            # 清理资源
+            try:
+                if deployment_id in active_modpack_deployments:
+                    if active_modpack_deployments[deployment_id].get('complete', False):
+                        active_modpack_deployments.pop(deployment_id, None)
+                        modpack_deploy_queues.pop(deployment_id, None)
+            except:
+                pass
+    
+    try:
+        return Response(generate(deployment_id), mimetype='text/event-stream')
+    except Exception as e:
+        logger.error(f"整合包部署流处理错误: {str(e)}")
+        return jsonify({'error': f'流处理错误: {str(e)}'}), 500
+
+
 
 # 日志管理API
 @app.route('/api/logs/api-server', methods=['GET'])

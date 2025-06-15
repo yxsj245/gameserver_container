@@ -67,6 +67,25 @@ class DownloadManager:
         self.max_workers = max_workers
         self.status = DownloadStatus()
         self.stop_event = threading.Event()
+        
+        # 创建共享的 Session 以复用连接
+        self.session = requests.Session()
+        
+        # 配置连接池适配器
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=max_workers,
+            pool_maxsize=max_workers * 2,
+            max_retries=requests.adapters.Retry(
+                total=3,
+                backoff_factor=0.3,
+                status_forcelist=[500, 502, 503, 504]
+            )
+        )
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
+        
+        # 设置默认超时
+        self.session.timeout = 30
     
     def download_file(self, url, save_path, headers=None):
         """下载单个文件"""
@@ -81,8 +100,8 @@ class DownloadManager:
             # 确保目录存在
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             
-            # 发送请求
-            response = requests.get(url, headers=headers, stream=True)
+            # 使用共享的 session 发送请求
+            response = self.session.get(url, headers=headers, stream=True, timeout=30)
             response.raise_for_status()
             
             # 获取文件大小
@@ -92,8 +111,10 @@ class DownloadManager:
             with open(save_path, 'wb') as f:
                 if total_size > 0:
                     downloaded = 0
-                    for chunk in response.iter_content(chunk_size=8192):
+                    # 使用更大的chunk_size提高效率
+                    for chunk in response.iter_content(chunk_size=32768):
                         if self.stop_event.is_set():
+                            response.close()
                             return False
                         if chunk:
                             f.write(chunk)
@@ -102,12 +123,19 @@ class DownloadManager:
                             self.status.current_progress = progress
                 else:
                     # 如果没有文件大小信息，直接写入
-                    f.write(response.content)
+                    for chunk in response.iter_content(chunk_size=32768):
+                        if self.stop_event.is_set():
+                            response.close()
+                            return False
+                        if chunk:
+                            f.write(chunk)
             
+            response.close()
             self.status.update(success=True)
             return True
             
         except Exception as e:
+            print(f"下载失败 {url}: {str(e)}")
             self.status.update(success=False)
             return False
     
@@ -149,6 +177,12 @@ class DownloadManager:
         print(f"\n\n✅ 下载完成: 成功 {self.status.success}/{self.status.total}, 失败 {self.status.failed}")
         return self.status.failed == 0
     
+    def close(self):
+        """关闭下载管理器，清理资源"""
+        if hasattr(self, 'session'):
+            self.session.close()
+        self.stop_event.set()
+    
     def _display_progress(self):
         """显示下载进度"""
         while not self.stop_event.is_set():
@@ -186,11 +220,16 @@ class MinecraftLoaderCLI:
         self.api = MinecraftLoaderAPI()
         self.download_dir = os.path.join(os.getcwd(), "downloads")
         self.modpack_dir = os.path.join(os.getcwd(), "modpacks")
-        self.download_manager = DownloadManager(max_workers=8)  # 创建下载管理器，最多8个线程
+        self.download_manager = DownloadManager(max_workers=6)  # 创建下载管理器，最多6个线程
         
         # 确保下载目录存在
         os.makedirs(self.download_dir, exist_ok=True)
         os.makedirs(self.modpack_dir, exist_ok=True)
+    
+    def __del__(self):
+        """析构函数，清理资源"""
+        if hasattr(self, 'download_manager'):
+            self.download_manager.close()
         
     def print_banner(self):
         """打印程序横幅"""
@@ -377,9 +416,35 @@ class MinecraftLoaderCLI:
             response.raise_for_status()
             data = response.json()
             
-            print(f"✅ 找到 {len(data['hits'])} 个整合包")
-            return data["hits"]
+            # 验证响应数据格式
+            if not isinstance(data, dict):
+                print(f"❌ API响应格式错误: 期望字典，收到 {type(data)}")
+                return []
             
+            if 'hits' not in data:
+                print(f"❌ API响应中缺少 'hits' 字段")
+                return []
+            
+            hits = data['hits']
+            if not isinstance(hits, list):
+                print(f"❌ API响应中 'hits' 字段格式错误: 期望列表，收到 {type(hits)}")
+                return []
+            
+            print(f"✅ 找到 {len(hits)} 个整合包")
+            
+            # 将 project_id 映射为 id 字段，以匹配前端期望的数据结构
+            for hit in hits:
+                if 'project_id' in hit:
+                    hit['id'] = hit['project_id']
+            
+            return hits
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ 网络请求失败: {str(e)}")
+            return []
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON解析失败: {str(e)}")
+            return []
         except Exception as e:
             print(f"❌ 搜索整合包失败: {str(e)}")
             return []
@@ -1001,12 +1066,13 @@ class MinecraftLoaderCLI:
             print(f"❌ 下载或解析整合包文件失败: {str(e)}")
             return {}
     
-    def download_modpack_files(self, index_data: Dict, output_dir: str) -> bool:
+    def download_modpack_files(self, index_data: Dict, output_dir: str, progress_callback=None) -> bool:
         """使用多线程下载整合包中的所有文件
         
         Args:
             index_data: 整合包索引数据
             output_dir: 输出目录
+            progress_callback: 进度回调函数，接收(progress_percent, message)参数
         
         Returns:
             下载是否成功
@@ -1031,11 +1097,22 @@ class MinecraftLoaderCLI:
         
         # 准备下载任务列表
         download_tasks = []
+        skipped_client_only = 0
+        
         for file_info in files:
             # 获取文件路径和文件名
             file_path = file_info.get("path", "")
             if not file_path:
                 continue
+            
+            # 检查环境配置，过滤仅客户端文件
+            env_config = file_info.get("env", {})
+            if env_config:
+                server_support = env_config.get("server", "required")
+                # 如果服务器端不支持此文件，跳过下载
+                if server_support == "unsupported":
+                    skipped_client_only += 1
+                    continue
                 
             # 创建保存路径
             save_path = os.path.join(files_dir, file_path)
@@ -1049,13 +1126,48 @@ class MinecraftLoaderCLI:
             if download_url:
                 download_tasks.append((download_url, save_path, headers))
         
+        if skipped_client_only > 0:
+            print(f"已跳过 {skipped_client_only} 个仅客户端文件")
+        
         if not download_tasks:
             print("❌ 没有可下载的文件")
             return False
         
         # 开始多线程下载
-        print(f"开始下载 {len(download_tasks)} 个文件，使用 {self.download_manager.max_workers} 个线程...")
-        return self.download_manager.download_files(download_tasks)
+        if progress_callback:
+            progress_callback(0, f"开始下载 {len(download_tasks)} 个文件，使用 {self.download_manager.max_workers} 个线程...")
+        else:
+            print(f"开始下载 {len(download_tasks)} 个文件，使用 {self.download_manager.max_workers} 个线程...")
+        
+        # 创建带进度回调的下载管理器
+        if progress_callback:
+            # 重写下载管理器的进度显示方法
+            original_display = self.download_manager._display_progress
+            def custom_display():
+                while not self.download_manager.stop_event.is_set():
+                    with self.download_manager.status.lock:
+                        total = self.download_manager.status.total
+                        completed = self.download_manager.status.completed
+                        current_file = self.download_manager.status.current_file
+                        current_progress = self.download_manager.status.current_progress
+                    
+                    if total > 0:
+                        overall_progress = (completed / total) * 100
+                        progress_callback(overall_progress, f"下载进度: {completed}/{total} 文件，当前: {current_file}")
+                    
+                    time.sleep(0.5)
+            
+            self.download_manager._display_progress = custom_display
+        
+        # 重置下载管理器的停止事件
+        self.download_manager.stop_event.clear()
+        
+        result = self.download_manager.download_files(download_tasks)
+        
+        if progress_callback:
+            progress_callback(100, "文件下载完成")
+        
+        return result
     
     def process_modpack_overrides(self, output_dir: str) -> bool:
         """处理整合包的覆盖文件
@@ -1101,4 +1213,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
