@@ -41,6 +41,8 @@ jobs:
           push: true  # 构建后自动推送
           tags: |
             xiaozhu674/gameservermanager:dev2.3.0
+            xiaozhu674/gameservermanager:dev
             ghcr.io/${{ github.repository_owner }}/gameservermanager:dev2.3.0
+            ghcr.io/${{ github.repository_owner }}/gameservermanager:dev
           cache-from: type=gha  # 使用GitHub缓存
           cache-to: type=gha,mode=max  # 写入GitHub缓存
