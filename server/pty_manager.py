@@ -572,10 +572,13 @@ class PTYManager:
             logger.error(f"进程ID {process_id} 不存在")
             return False
         
-        result = self.processes[process_id].terminate(force)
+        process = self.processes[process_id]
+        result = process.terminate(force)
         if result:
             # 清理资源
-            self.processes[process_id].clean_up()
+            process.clean_up()
+            # 从管理器中移除进程引用，防止内存泄漏
+            self.remove_process(process_id)
         return result
     
     def get_status(self, process_id=None):
