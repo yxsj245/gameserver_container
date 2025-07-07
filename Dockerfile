@@ -1,4 +1,4 @@
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     STEAM_USER=steam \
@@ -6,15 +6,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     STEAMCMD_DIR=/home/steam/steamcmd \
     GAMES_DIR=/home/steam/games
 
-# 将apt源改为中国镜像源（清华TUNA）
-RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list \
-    && sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+# 将apt源改为中国镜像源（阿里云）
+# 移除旧的、传统的sources.list文件，并使用DEB822格式创建新的源配置
+# 这种新格式在Debian 12 (Bookworm)中具有更高优先级
+RUN rm -f /etc/apt/sources.list && \
+    printf "Types: deb\nURIs: http://mirrors.aliyun.com/debian/\nSuites: bookworm\nComponents: main contrib non-free non-free-firmware\n" > /etc/apt/sources.list.d/debian.sources && \
+    printf "\nTypes: deb\nURIs: http://mirrors.aliyun.com/debian/\nSuites: bookworm-updates\nComponents: main contrib non-free non-free-firmware\n" >> /etc/apt/sources.list.d/debian.sources && \
+    printf "\nTypes: deb\nURIs: http://mirrors.aliyun.com/debian-security\nSuites: bookworm-security\nComponents: main contrib non-free non-free-firmware\n" >> /etc/apt/sources.list.d/debian.sources
 
-# 添加deadsnakes PPA源以安装Python 3.13
-RUN apt-get update && apt-get install -y software-properties-common \
-    && apt-get install -y gpg \
-    && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776 \
-    && echo "deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu focal main" > /etc/apt/sources.list.d/deadsnakes.list
+
+# 不使用deadsnakes PPA，直接使用Debian官方Python包
 
 # 安装SteamCMD和常见依赖（包括32位库）
 RUN apt-get update && apt-get upgrade -y \
@@ -31,7 +32,7 @@ RUN apt-get update && apt-get upgrade -y \
         xdg-user-dirs \
         libncurses5:i386 \
         libbz2-1.0:i386 \
-        libicu67:i386 \
+        libicu72:i386 \
         libxml2:i386 \
         libstdc++6:i386 \
         lib32gcc-s1 \
@@ -40,8 +41,7 @@ RUN apt-get update && apt-get upgrade -y \
         libcurl4-gnutls-dev:i386 \
         libcurl4-gnutls-dev \
         libgl1-mesa-glx:i386 \
-        gcc-10-base:i386 \
-        libssl1.1:i386 \
+        libssl3:i386 \
         libopenal1:i386 \
         libtinfo6:i386 \
         libtcmalloc-minimal4:i386 \
@@ -102,10 +102,11 @@ RUN apt-get update && apt-get upgrade -y \
         libatomic1:i386 \
         nano \
         net-tools \
-        netcat \
+        netcat-openbsd \
         procps \
-        python3.13 \
-        python3.13-dev \
+        python3 \
+        python3-dev \
+        python3-pip \
         tar \
         unzip \
         bzip2 \
@@ -195,15 +196,10 @@ WORKDIR /home/steam/app
 RUN npm install --legacy-peer-deps --no-fund && \
     npm install react-router-dom @types/react @types/react-dom react-dom @monaco-editor/react monaco-editor js-cookie @types/js-cookie
 
-# 安装pip for Python 3.13
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.13
-
-# 创建python3和pip3的符号链接指向python3.13
-RUN ln -sf /usr/bin/python3.13 /usr/bin/python3 \
-    && ln -sf /usr/local/bin/pip3.13 /usr/bin/pip3
+# pip已经通过python3-pip包安装，无需额外配置
 
 # 安装后端依赖
-RUN python3.13 -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple flask flask-cors gunicorn requests psutil PyJWT rarfile zstandard docker configobj pyhocon ruamel.yaml toml
+RUN python3 -m pip install --break-system-packages -i https://pypi.tuna.tsinghua.edu.cn/simple flask flask-cors gunicorn requests psutil PyJWT rarfile zstandard docker configobj pyhocon ruamel.yaml toml
 
 # 添加启动脚本
 RUN echo '#!/bin/bash\n\
