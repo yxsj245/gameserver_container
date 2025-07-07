@@ -40,9 +40,9 @@ jobs:
           context: .  # 构建上下文路径
           push: true  # 构建后自动推送
           tags: |
-            xiaozhu674/gameservermanager:2.4.2-dev
+            xiaozhu674/gameservermanager:2.5.0-dev
             xiaozhu674/gameservermanager:dev
-            ghcr.io/${{ github.repository_owner }}/gameservermanager:2.4.2-dev
+            ghcr.io/${{ github.repository_owner }}/gameservermanager:2.5.0-dev
             ghcr.io/${{ github.repository_owner }}/gameservermanager:dev
           cache-from: type=gha  # 使用GitHub缓存
           cache-to: type=gha,mode=max  # 写入GitHub缓存
