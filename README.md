@@ -20,6 +20,10 @@
 
 GameServerManager（简称GSManager）是一个基于 **Docker** 技术的现代化游戏服务器管理平台，专为简化游戏服务器的部署、管理和维护而设计。
 
+# 重磅通知 GSManager3.0 进入内测阶段
+<img width="1915" height="1004" alt="image" src="https://github.com/user-attachments/assets/baccf78e-e580-45bf-ad7b-f2dd106c02ce" />
+
+
 ### ✨ 核心特性
 
 - 🐳 **Docker 容器化** - 完全基于Docker运行，环境隔离，兼容性极佳
